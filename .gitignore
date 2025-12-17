@@ -1,0 +1,13 @@
+__pycache__/
+
+# 忽略 Python 虚拟环境（非常重要，绝对不要传这个，动辄几百MB）
+echo "venv/" >> .gitignore
+echo ".env" >> .gitignore
+
+# 忽略大型数据集或模型权重（GitHub 单文件有限制）
+echo "*.pth" >> .gitignore
+echo "*.onnx" >> .gitignore
+echo "data/" >> .gitignore
+
+# 忽略系统自动生成的垃圾文件（如 Mac 的 .DS_Store）
+echo ".DS_Store" >> .gitignore
