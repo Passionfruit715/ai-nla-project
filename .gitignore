@@ -11,3 +11,8 @@ echo "data/" >> .gitignore
 
 # 忽略系统自动生成的垃圾文件（如 Mac 的 .DS_Store）
 echo ".DS_Store" >> .gitignore
+
+# Vim
+*.swp
+*.swo
+*~
