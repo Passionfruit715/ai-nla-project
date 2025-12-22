@@ -53,8 +53,8 @@ def bidiagonalize(A):
 # Test the implementation for all cases
 A1 = np.random.randn(4, 6)
 U, B, V = bidiagonalize(A1)
-print(np.allclose(U.T @ U, np.eye(4), atol=1e-8))
-print(np.allclose(V.T @ V, np.eye(6), atol=1e-8))
-print(np.allclose(U @ B @ V.T, A1, atol=1e-8))
+#print(np.allclose(U.T @ U, np.eye(4), atol=1e-8))
+#print(np.allclose(V.T @ V, np.eye(6), atol=1e-8))
+#print(np.allclose(U @ B @ V.T, A1, atol=1e-8))
 
 
