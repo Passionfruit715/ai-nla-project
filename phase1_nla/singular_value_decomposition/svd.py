@@ -105,13 +105,20 @@ def apply_right_givens(ek, ek1, dk1, dk2, bulge):
 
     return c_r, s_r, ek_new, ek1_new, dk1_new, dk2_new, bulge2
 
-def apply_givens_to_cols():
-    """
-    apply givens to left and right orthogonal matrices, construct complete SVD.
-    """
-    return 0
 
-def bulge_chasing(d, e, l, r, mu):
+def apply_givens_to_cols(U, c, s, j):
+    """
+    apply givens to left orthogonal matrices U, construct complete SVD. 
+    !extract cols are more expensive than rows, see if optimize later.
+    """
+    uj = U[:,j].copy()
+    uj1 = U[:,j+1].copy()
+
+    U[:,j] = c*uj + s*uj1
+    U[:,j+1] = -s*uj + c*uj1
+
+
+def bulge_chasing(d, e, l, r, mu, U = None, V= None):
     """
     implicit shifted QR iterations. 
 
@@ -133,11 +140,17 @@ def bulge_chasing(d, e, l, r, mu):
 
     d[l],d[l+1],e[l] = dk_new, dk1_new, ek_new
 
+    # applys givens to V^T
+    apply_givens_to_cols(V, c_r, s_r, 0)
+
     # main iterations for bulge chasing, apply left and right givens rotations alternately.
     for k in range(l, r-1):
         # c and s used later to calculate U and V
         c_l, s_l, d[k], d[k+1], e[k], e[k+1], bulge = apply_left_givens(d[k], d[k+1], e[k], e[k+1], bulge)
+        apply_givens_to_cols(U, c_l, s_l, k)
+
         c_r, s_r, e[k], e[k+1], d[k+1], d[k+2], bulge = apply_right_givens(e[k], e[k+1], d[k+1], d[k+2], bulge)
+        apply_givens_to_cols(V,c_r, s_r, k+1)
 
     # last givens rotation for the right bottom corner 2*2 submatrix to exit bulge chasing.  
     c_l, s_l, _ = givens_rotation(d[r-1], bulge)
@@ -153,15 +166,17 @@ def bulge_chasing(d, e, l, r, mu):
     dk1_new = -s_l*ek + c_l*dk1
 
     d[r-1], d[r], e[r-1] = dk_new, dk1_new, ek_new
+    
+    apply_givens_to_cols(U,c_l, s_l, r-1)
 
-    return d, e
+    return d, e, U, V
 
 
 def should_deflate(dk, dk1, ek, tau=50):
     """
     entry on superdiagonal(e) should deflate or not.
     """
-    tol = tau * EPS * max(1.0, abs(dk) + abs(dk1))
+    tol = tau * EPS * (abs(dk) + abs(dk1))
     return abs(ek) <= tol
 
 def sweep_deflate(d,e,l,r,tau=50):
@@ -170,6 +185,10 @@ def sweep_deflate(d,e,l,r,tau=50):
     """
     for k in range(l, r):
         if should_deflate(d[k], d[k+1], e[k], tau):
+            print("deflate at i=", k,
+            "e_old=", e[k],
+            "thres=", tau*EPS*(abs(d[k]) + abs(d[k+1])),
+            "ratio=", abs(e[k])/(tau*EPS*( abs(d[k]) + abs(d[k+1])) + 1e-300))
             e[k] = 0.0
 
 def find_active_block(e, r):
@@ -182,9 +201,9 @@ def find_active_block(e, r):
     return l
 
 
-def gr_svd(d, e, U=None, V=None):
+def deflation(d, e, U, V):
     """
-    deflation, main iteration of Golub Reinsch Singular Value Decomposition.
+    deflation to smaller submatrices, thus no need to perform QR iterations for the whole matrix, divide and conquer.
     """
     r = len(d)-1
     l = 0
@@ -200,55 +219,111 @@ def gr_svd(d, e, U=None, V=None):
         l  = find_active_block(e, r)
 
         mu = wilkinson_shift(d, e, l, r)
-        d, e = bulge_chasing(d, e, l, r, mu)
+        d, e, U, V = bulge_chasing(d, e, l, r, mu, U, V)
 
         sweep_deflate(d,e,l,r)
     
-    return d, e
+    return d, e, U, V
 
 
+def golub_reinsch_svd(A):
+    """
+    the main loop for singular value decomposition.
+    """
+
+    U, B, V, if_transpose =  bidiagonalize(A)
+    
+    d = np.diag(B).copy()
+    e = np.diag(B, k=1).copy()
+
+    d, e, U, V = deflation(d, e, U, V)
+ 
+    # if transpose, means the result is svd of A.T. 
+    # need to reassign U and V coresspondely.  
+    # svd process: A.T = U @ d @ V.T
+    # A = V @ D @ U.T 
+    # thus, we assign u_out = V, vt_out = U.T
+    if if_transpose:
+        u_out = V
+        vt_out = U.T
+    else:
+        u_out = U
+        vt_out = V.T
+
+    # sort the d entries in descent order, means singular value in descent order.
+
+    idx = np.argsort(d)[::-1]
+
+    d_out = d[idx]
+    u_out = u_out[:,idx]
+    vt_out = vt_out[idx,:]
+    
+    # entries in d might be negative, 
+    # take its abs and move the - to the V or U. (V in this case)
+    sign = np.sign(d_out)
+    sign[sign == 0] = 1
+
+    d_out = abs(d_out)
+    vt_out *= sign[:, None]
+
+    return d_out, e, u_out, vt_out
 
 
 if __name__ == "__main__":
-    # test case 1 for bulge chasing. 
+    ## test case 1 for SVD, m < n: 
+    #A1 = np.random.randn(4,6)
+    #d1, _, u1, v1 = golub_reinsch_svd(A1)
+    #
+    ## verify using standard package svd algorithms.
+    #u, s1, vh = np.linalg.svd(A1, compute_uv=True, full_matrices=False)
+    #
+    #A_hat1 = u1 @ np.diag(d1) @ v1
+    #print(np.linalg.norm(A1 - A_hat1) / np.linalg.norm(A1))
+    #print(np.allclose(d1, s1, atol=1e-8))
+
+    ## test case 2: m > n
+
+    #A2 = np.random.randn(6,4)
+    #d2, _, u2, v2 = golub_reinsch_svd(A2)
+    #
+    ## verify using standard package svd algorithms.
+    #u, s2, vh = np.linalg.svd(A2, compute_uv=True, full_matrices=False)
+    #
+    #A_hat2 = u2 @ np.diag(d2) @ v2
+    #print(np.linalg.norm(A2 - A_hat2) / np.linalg.norm(A2))
+    #print(np.allclose(d2, s2, atol=1e-8))
+
+
+    ## test case 3
+    U0, _ = np.linalg.qr(np.random.randn(6,6))
+    V0, _ = np.linalg.qr(np.random.randn(4,4))
+
+    #s = np.array([5.0, 2.0, 0.0, 0.0])   # 精确低秩
+    #A = U0[:, :4] @ np.diag(s) @ V0.T
+
+    #d, e, U, Vt = golub_reinsch_svd(A)
+    #print(d)                 # 后两个应接近 0
+    #print(np.linalg.norm(A - U @ np.diag(d) @ Vt) / np.linalg.norm(A))
     
-    # Args
+    # test case 4: 
+    s = np.array([5.0, 2.0, 1e-12, 1e-14])
+    A = U0[:, :4] @ np.diag(s) @ V0.T
+
+    d, e, U, Vt = golub_reinsch_svd(A)
+    #print(d)                 # 后两个应接近 0
+    #print(np.linalg.norm(A - U @ np.diag(d) @ Vt) / np.linalg.norm(A))
     
-    # squre matrix
-    A1 = np.random.randn(4,6)
-    U, B, V = bidiagonalize(A1)
+    #U, d, Vt = np.linalg.svd(A)
+    r = len(d)
+    U_r = U[:, :r]
+    Vt_r = Vt[:r,:]
+    Ahat = U_r @ np.diag(d) @ Vt_r
+    rel_recon = np.linalg.norm(A - Ahat) / np.linalg.norm(A)
+    print("rel_recon =", rel_recon)
 
-    
-    #k = min(B.shape)
-    #Bcore = B[:k,:k]
+    Sigma = np.diag(d)
+    print("diag-res =", np.linalg.norm(U_r.T @ A @ Vt_r.T - Sigma) / np.linalg.norm(Sigma))
 
-    d = np.diag(B).copy()
-    e = np.diag(B, k=1).copy() # superdiagonal
-    
-    d_new, e_new = gr_svd(d,e)
-
-    d_new = np.sort(np.abs(d_new))[::-1]
-
-    print(f"d_new is {d_new}")
-    print(f"e_new is {e_new}")
-    
-
-    # verify using standard package svd algorithms.
-    s_numpy = np.linalg.svd(B, compute_uv=False)
-    
-    print(s_numpy)
-    print(np.allclose(d_new, s_numpy, atol=1e-8))
-
-
-
-
-    #norm2_before = sum(di*di for di in d) + sum(ei*ei for ei in e)
-    #norm2_after  = sum(di*di for di in d_new) + sum(ei*ei for ei in e_new)
-    #assert abs(norm2_after - norm2_before) <= 100*EPS*max(1.0, norm2_before)
-
-
-
-
-
+    u, s, vh = np.linalg.svd(A, compute_uv=True)
 
 

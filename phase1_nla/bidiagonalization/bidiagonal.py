@@ -11,6 +11,7 @@ def bidiagonalize(A):
     """
     m, n = A.shape
     if_transpose = 0
+
     if m < n:
         B = A.T.copy()
         m, n = B.shape
@@ -43,18 +44,24 @@ def bidiagonalize(A):
 
             B_sub -= 2 * np.outer(B_sub @ v, v)
             V[:,k+1:] -= 2 * np.outer(V[:,k+1:] @ v, v)
-        
+    
+    # important: when m<n, B^T will become lower bidiagonal matrix, this will simplify the svd 
+    # process later.
     if if_transpose:
-        return V, B.T, U
+        return U, B, V, if_transpose
+    # normal case, m>=n, B^T will become upper bidiagonal matrix. 
     else:
-        return U, B, V 
+        return U, B, V, if_transpose 
 
 
 # Test the implementation for all cases
-A1 = np.random.randn(4, 6)
-U, B, V = bidiagonalize(A1)
+A1 = np.random.randn(8, 10)
+U, B, V, if_transpose = bidiagonalize(A1)
 #print(np.allclose(U.T @ U, np.eye(4), atol=1e-8))
 #print(np.allclose(V.T @ V, np.eye(6), atol=1e-8))
-#print(np.allclose(U @ B @ V.T, A1, atol=1e-8))
+if if_transpose:
+    print(np.allclose(V @ B.T @ U.T, A1, atol=1e-8))
+elif not if_transpose:
+    print(np.allclose(U @ B @ V.T, A1, atol=1e-8))
 
 
