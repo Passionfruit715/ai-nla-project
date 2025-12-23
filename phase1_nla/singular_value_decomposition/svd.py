@@ -5,7 +5,7 @@ from phase1_nla.bidiagonalization import bidiagonalize
 np.random.seed(0)
 
 EPS = np.finfo(float).eps
-debug = 1
+debug = True
 
 
 def wilkinson_shift(d, e, l, r):
@@ -158,15 +158,24 @@ def bulge_chasing(d, e, l, r, mu):
 
 
 def should_deflate(dk, dk1, ek, tau=50):
+    """
+    entry on superdiagonal(e) should deflate or not.
+    """
     tol = tau * EPS * max(1.0, abs(dk) + abs(dk1))
     return abs(ek) <= tol
 
 def sweep_deflate(d,e,l,r,tau=50):
+    """
+    sweep the whole superdiagonal, and set all deflated entries to 0.0.
+    """
     for k in range(l, r):
         if should_deflate(d[k], d[k+1], e[k], tau):
             e[k] = 0.0
 
 def find_active_block(e, r):
+    """
+    from bottom to top, find a active submatrix to continue perform bulge chasing.
+    """
     l = r 
     while l > 0 and e[l-1] != 0.0:
         l -= 1
@@ -175,13 +184,14 @@ def find_active_block(e, r):
 
 def gr_svd(d, e, U=None, V=None):
     """
-    deflation
+    deflation, main iteration of Golub Reinsch Singular Value Decomposition.
     """
     r = len(d)-1
     l = 0
 
     while r > 0:
-        while r > 0 and e[r-1] == 0.0:
+        # the bottom submatrix only left with one entry, deflate. gradually move r up. 
+        while r > 0 and e[r-1] == 0.0:  # add r > 0 to aviod e[-1]
             r -= 1
         
         if r == 0:
@@ -205,17 +215,15 @@ if __name__ == "__main__":
     # Args
     
     # squre matrix
-    A1 = np.random.randn(100,100)
+    A1 = np.random.randn(4,6)
     U, B, V = bidiagonalize(A1)
 
     
-    k = min(B.shape)
-    Bcore = B[:k,:k]
+    #k = min(B.shape)
+    #Bcore = B[:k,:k]
 
-    d = np.diag(Bcore).copy()
-
-    # for rectangular matrix, if m < n, use k = -1, else use k = 1!!!
-    e = np.diag(Bcore, k=1).copy() # superdiagonal
+    d = np.diag(B).copy()
+    e = np.diag(B, k=1).copy() # superdiagonal
     
     d_new, e_new = gr_svd(d,e)
 
