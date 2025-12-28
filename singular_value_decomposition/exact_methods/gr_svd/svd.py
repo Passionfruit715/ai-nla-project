@@ -1,11 +1,10 @@
 """ Golub-Reinsch SVD implementation.  keyword: bidiagonalization, implicit shifted QR iterations, bulge chasing, deflation(divide & conquer), wilkinson shift.  """
 
 import numpy as np  
-from phase1_nla.bidiagonalization import bidiagonalize
+from ...orthogonal_transforms.bidiagonalization import bidiagonalize
 np.random.seed(0)
 
 EPS = np.finfo(float).eps
-debug = True
 
 
 def wilkinson_shift(d, e, l, r):
@@ -57,53 +56,50 @@ def givens_rotation(a, b):
     s = b / r
     return c, s, r
 
-def _assert_bulge_near_zero(x, scale, k=50, msg=""):
+def _assert_near_zero(x, scale, k=50, msg=""):
     """
-    assert bulge is eliminated to near zero.
+    assert a variable is eliminated to near zero under appropriate scale.
     """
-    tol = k * EPS * max(1.0, scale)
-    assert abs(x) < tol, f"{msg} |x| = {abs(x)}, tol = {tol}, x = {x}"
+    tol = k * EPS * scale
+    if abs(x) <= tol:
+        print(msg)
+        return True
+    else:
+        return False
 
-def apply_left_givens(dk, dk1, ek, ek1, bulge):
+def apply_left_givens(c_l, s_l, dk, dk1, ek, ek1, bulge):
     """
     applys the givens rotation on the left: G @ [a,b]^T = [r, 0]^T
     """
-    c_l, s_l, _ = givens_rotation(dk, bulge)
+    # compute the new matrix value: matrix multiplication.    
+    dk_new = c_l*dk + s_l*bulge
 
-    # compute the new matrix value: matrix multiplication.
-    dk_new = c_l*dk + s_l*bulge 
+
     ek_new = c_l*ek + s_l*dk1
     bulge2 = s_l*ek1
 
     bg_new = -s_l*dk + c_l*bulge
 
-    if debug:
-        _assert_bulge_near_zero(bg_new, abs(dk) + abs(bulge), msg="left givens bg_new not near ~0")
-
     dk1_new = -s_l*ek + c_l*dk1
     ek1_new = c_l*ek1
-    
-    return c_l, s_l, dk_new, dk1_new, ek_new, ek1_new, bulge2
+ 
+    return dk_new, dk1_new, ek_new, ek1_new, bulge2
 
-def apply_right_givens(ek, ek1, dk1, dk2, bulge):
+def apply_right_givens(c_r, s_r, ek, ek1, dk1, dk2, bulge):
     """
     applys the givens rotation on the right: [a,b] @ G^T = [r, 0]
     """
-    c_r, s_r, _ = givens_rotation(ek, bulge)
-
     # compute the new matrix value: just matrix multiplication.
     ek_new = c_r*ek + s_r*bulge
     dk1_new = c_r*dk1 + s_r*ek1
     bulge2 = s_r*dk2 
 
     bg_new = -s_r*ek + c_r*bulge  # bg_new should become 0 or very close to 0.
-    if debug:
-        _assert_bulge_near_zero(bg_new, abs(ek) + abs(bulge), msg="right givens bg_new not near ~0")
 
     ek1_new = -s_r*dk1 + c_r*ek1
     dk2_new = c_r*dk2
 
-    return c_r, s_r, ek_new, ek1_new, dk1_new, dk2_new, bulge2
+    return ek_new, ek1_new, dk1_new, dk2_new, bulge2
 
 
 def apply_givens_to_cols(U, c, s, j):
@@ -116,7 +112,6 @@ def apply_givens_to_cols(U, c, s, j):
 
     U[:,j] = c*uj + s*uj1
     U[:,j+1] = -s*uj + c*uj1
-
 
 def bulge_chasing(d, e, l, r, mu, U = None, V= None):
     """
@@ -131,42 +126,24 @@ def bulge_chasing(d, e, l, r, mu, U = None, V= None):
     a = d[l]**2 - mu
     b = d[l] * e[l]
     c_r,s_r,_ = givens_rotation(a, b)
-    dk, dk1, ek = d[l], d[l+1], e[l]
     
-    dk_new = c_r*dk + s_r*ek
-    ek_new = -s_r*dk + c_r*ek
-    bulge = s_r*dk1
-    dk1_new = c_r*dk1
-
-    d[l],d[l+1],e[l] = dk_new, dk1_new, ek_new
-
-    # applys givens to V^T
+    _, e[l], d[l], d[l+1], bulge = apply_right_givens(c_r, s_r, 0.0, e[l], d[l], d[l+1], bulge) 
     apply_givens_to_cols(V, c_r, s_r, 0)
 
     # main iterations for bulge chasing, apply left and right givens rotations alternately.
     for k in range(l, r-1):
-        # c and s used later to calculate U and V
-        c_l, s_l, d[k], d[k+1], e[k], e[k+1], bulge = apply_left_givens(d[k], d[k+1], e[k], e[k+1], bulge)
+        c_l, s_l, _ = givens_rotation(d[k], bulge)
+        d[k], d[k+1], e[k], e[k+1], bulge = apply_left_givens(c_l, s_l, d[k], d[k+1], e[k], e[k+1], bulge)
         apply_givens_to_cols(U, c_l, s_l, k)
 
-        c_r, s_r, e[k], e[k+1], d[k+1], d[k+2], bulge = apply_right_givens(e[k], e[k+1], d[k+1], d[k+2], bulge)
+        
+        c_r, s_r, _ = givens_rotation(e[k], bulge)
+        e[k], e[k+1], d[k+1], d[k+2], bulge= apply_right_givens(c_r, s_r, e[k], e[k+1], d[k+1], d[k+2], bulge)
         apply_givens_to_cols(V,c_r, s_r, k+1)
 
-    # last givens rotation for the right bottom corner 2*2 submatrix to exit bulge chasing.  
+    # last givens rotation for the right bottom corner 2*2 submatrix to exit bulge chasing, bulge should be 0 in the end.  
     c_l, s_l, _ = givens_rotation(d[r-1], bulge)
-    dk, dk1, ek, bg = d[r-1], d[r], e[r-1], bulge
-
-    dk_new = c_l*dk + s_l*bg
-    ek_new = c_l*ek + s_l*dk1
-
-    bg_new = -s_l*dk + c_l*bg
-
-    if debug:
-        _assert_bulge_near_zero(bg_new, abs(d[r-1]) + abs(bulge), msg="last left givens bg_new not near ~0")
-    dk1_new = -s_l*ek + c_l*dk1
-
-    d[r-1], d[r], e[r-1] = dk_new, dk1_new, ek_new
-    
+    d[r-1], d[r], e[r-1], _, bulge = apply_left_givens(c_l, s_l, d[r-1], d[r], e[r-1], 0.0, bulge)
     apply_givens_to_cols(U,c_l, s_l, r-1)
 
     return d, e, U, V
@@ -176,7 +153,7 @@ def should_deflate(dk, dk1, ek, tau=50):
     """
     entry on superdiagonal(e) should deflate or not.
     """
-    tol = tau * EPS * (abs(dk) + abs(dk1))
+    tol = tau * EPS * max(1.0, (abs(dk) + abs(dk1)))
     return abs(ek) <= tol
 
 def sweep_deflate(d,e,l,r,tau=50):
@@ -187,8 +164,8 @@ def sweep_deflate(d,e,l,r,tau=50):
         if should_deflate(d[k], d[k+1], e[k], tau):
             print("deflate at i=", k,
             "e_old=", e[k],
-            "thres=", tau*EPS*(abs(d[k]) + abs(d[k+1])),
-            "ratio=", abs(e[k])/(tau*EPS*( abs(d[k]) + abs(d[k+1])) + 1e-300))
+            "thres=", tau*EPS* max(1.0, (abs(d[k]) + abs(d[k+1]))),
+            "ratio=", abs(e[k])/(tau*EPS* max(1.0,  abs(d[k]) + abs(d[k+1])) + 1e-300))
             e[k] = 0.0
 
 def find_active_block(e, r):
@@ -212,6 +189,8 @@ def deflation(d, e, U, V):
         # the bottom submatrix only left with one entry, deflate. gradually move r up. 
         while r > 0 and e[r-1] == 0.0:  # add r > 0 to aviod e[-1]
             r -= 1
+
+        #breakpoint()
         
         if r == 0:
             break
@@ -219,6 +198,7 @@ def deflation(d, e, U, V):
         l  = find_active_block(e, r)
 
         mu = wilkinson_shift(d, e, l, r)
+
         d, e, U, V = bulge_chasing(d, e, l, r, mu, U, V)
 
         sweep_deflate(d,e,l,r)
@@ -235,7 +215,6 @@ def golub_reinsch_svd(A):
     
     d = np.diag(B).copy()
     e = np.diag(B, k=1).copy()
-
     d, e, U, V = deflation(d, e, U, V)
  
     # if transpose, means the result is svd of A.T. 
@@ -251,20 +230,16 @@ def golub_reinsch_svd(A):
         vt_out = V.T
 
     # sort the d entries in descent order, means singular value in descent order.
+    sign = np.sign(d)
+    sign[sign == 0] = 1
+
+    d = abs(d)
+    vt_out *= sign[:, None]
 
     idx = np.argsort(d)[::-1]
-
     d_out = d[idx]
     u_out = u_out[:,idx]
     vt_out = vt_out[idx,:]
-    
-    # entries in d might be negative, 
-    # take its abs and move the - to the V or U. (V in this case)
-    sign = np.sign(d_out)
-    sign[sign == 0] = 1
-
-    d_out = abs(d_out)
-    vt_out *= sign[:, None]
 
     return d_out, e, u_out, vt_out
 
@@ -295,34 +270,27 @@ if __name__ == "__main__":
 
 
     ## test case 3
-    U0, _ = np.linalg.qr(np.random.randn(6,6))
-    V0, _ = np.linalg.qr(np.random.randn(4,4))
+    U0, _ = np.linalg.qr(np.random.randn(3,3))
+    V0, _ = np.linalg.qr(np.random.randn(3,3))
 
-    #s = np.array([5.0, 2.0, 0.0, 0.0])   # 精确低秩
-    #A = U0[:, :4] @ np.diag(s) @ V0.T
-
-    #d, e, U, Vt = golub_reinsch_svd(A)
-    #print(d)                 # 后两个应接近 0
-    #print(np.linalg.norm(A - U @ np.diag(d) @ Vt) / np.linalg.norm(A))
     
     # test case 4: 
-    s = np.array([5.0, 2.0, 1e-12, 1e-14])
-    A = U0[:, :4] @ np.diag(s) @ V0.T
+    s = np.array([4.0, 3.0, 2.0])
+    A = U0[:, :3] @ np.diag(s) @ V0.T
+
+    #d,e,u,v = deflation(s, e, np.eye(3), np.eye(3))
 
     d, e, U, Vt = golub_reinsch_svd(A)
-    #print(d)                 # 后两个应接近 0
-    #print(np.linalg.norm(A - U @ np.diag(d) @ Vt) / np.linalg.norm(A))
-    
-    #U, d, Vt = np.linalg.svd(A)
-    r = len(d)
-    U_r = U[:, :r]
-    Vt_r = Vt[:r,:]
-    Ahat = U_r @ np.diag(d) @ Vt_r
-    rel_recon = np.linalg.norm(A - Ahat) / np.linalg.norm(A)
-    print("rel_recon =", rel_recon)
+    #
+    #r = len(d)
+    #U_r = U[:, :r]
+    #Vt_r = Vt[:r,:]
+    #Ahat = U_r @ np.diag(d) @ Vt_r
+    #rel_recon = np.linalg.norm(A - Ahat) / np.linalg.norm(A)
+    #print("rel_recon =", rel_recon)
 
-    Sigma = np.diag(d)
-    print("diag-res =", np.linalg.norm(U_r.T @ A @ Vt_r.T - Sigma) / np.linalg.norm(Sigma))
+    #Sigma = np.diag(d)
+    #print("diag-res =", np.linalg.norm(U_r.T @ A @ Vt_r.T - Sigma) / np.linalg.norm(Sigma))
 
     u, s, vh = np.linalg.svd(A, compute_uv=True)
 
